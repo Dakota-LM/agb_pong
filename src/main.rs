@@ -1,45 +1,66 @@
-// Games made using `agb` are no_std which means you don't have access to the standard
-// rust library. This is because the game boy advance doesn't really have an operating
-// system, so most of the content of the standard library doesn't apply.
-//
-// Provided you haven't disabled it, agb does provide an allocator, so it is possible
-// to use both the `core` and the `alloc` built in crates.
 #![no_std]
-// `agb` defines its own `main` function, so you must declare your game's main function
-// using the #[agb::entry] proc macro. Failing to do so will cause failure in linking
-// which won't be a particularly clear error message.
 #![no_main]
-// This is required to allow writing tests
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
 #![cfg_attr(test, test_runner(agb::test_runner::test_runner))]
 
-use agb::display::object::{OamManaged, Object};
-use agb::display::Priority;
-use agb::fixnum::Vector2D;
+/*
+    Build:
+        cargo build --release
+
+    Run in mGBA-qt:
+        cargo run --release
+
+    Convert binary to gba file:
+        agb-gbafix target\thumbv4t-none-eabi\release\<filename> -o <filename>.gba
+        example: agb-gbafix target\thumbv4t-none-eabi\release\pong -o Pong.gba
+*/
+
+#[allow(unused_imports)]
 use agb::{
-    display::object::{Graphics, Tag},
-    include_aseprite,
+    self, display::{
+        object::{Graphics, OamManaged, Object, SpriteVram, Tag},
+        Priority
+    }, fixnum::Vector2D, include_aseprite, input::{Button, ButtonController}
 };
 
-const GRAPHICS: &Graphics = include_aseprite!("gfx/sprites.aseprite");
+/*
+    TODO:
+        - Need text for winner
+        - Need play again text with "press A to start again"
+        - Better paddle collisions
+        - Better paddle AI
+        - Randomize start location of the ball
+*/
 
-const PADDLE_END: &Tag = GRAPHICS.tags().get("Paddle End");
-const PADDLE_MID: &Tag = GRAPHICS.tags().get("Paddle Mid");
-const BALL: &Tag = GRAPHICS.tags().get("Ball");
 
-// The main function must take 1 arguments and never return. The agb::entry decorator
-// ensures that everything is in order. `agb` will call this after setting up the stack
-// and interrupt handlers correctly. It will also handle creating the `Gba` struct for you.
+// import sprite graphics
+static GRAPHICS:     &Graphics = include_aseprite!("gfx/sprites.aseprite");
+static NUM_GRAPHICS: &Graphics = include_aseprite!("gfx/Numbers.aseprite");
+
+// create references so that the script can utilize the imported sprites
+static PADDLE_END:   &Tag      = GRAPHICS.tags().get("Paddle End");
+static PADDLE_MID:   &Tag      = GRAPHICS.tags().get("Paddle Mid");
+static BALL:         &Tag      = GRAPHICS.tags().get("Ball");
+
+static ZERO:         &Tag      = NUM_GRAPHICS.tags().get("Zero");
+static ONE:          &Tag      = NUM_GRAPHICS.tags().get("One");
+static TWO:          &Tag      = NUM_GRAPHICS.tags().get("Two");
+static THREE:        &Tag      = NUM_GRAPHICS.tags().get("Three");
+
+
 #[agb::entry]
 fn main(mut gba: agb::Gba) -> ! {
     // Get the object manager
-    let object = gba.display.object.get();
-    let mut input = agb::input::ButtonController::new();
+    let object:           OamManaged<'_>   = gba.display.object.get_managed();
+    // Create an input object
+    let mut input:        ButtonController = agb::input::ButtonController::new();
 
-    let mut ball: Ball = Ball::new(&object);
-    let mut right_paddle = Paddle::new(&object, Side::Right);
-    let mut left_paddle: Paddle = Paddle::new(&object, Side::Left);
+    let mut ball:         Ball   = Ball::new(&object);
+    let mut right_paddle: Paddle = Paddle::new(&object, Side::Right);
+    let mut left_paddle:  Paddle = Paddle::new(&object, Side::Left);
+    let mut player_score: Score  = Score::new(&object, ZERO, (88,5).into());
+    let mut ai_score:     Score  = Score::new(&object, ZERO, (136,5).into());
 
     loop {
         // This will calculate the new position and enforce the position
@@ -54,23 +75,67 @@ fn main(mut gba: agb::Gba) -> ! {
         //Simple collision detection that is quite faulty at times, but it works for learning
         left_paddle.checks_all_collisions(&mut ball);
         right_paddle.checks_all_collisions(&mut ball);
+        
+        if ball.entity.position.x < -15 {
+            ball.entity.velocity.x = 0;
+            ball.entity.velocity.y = 0;
+            ai_score.increment(&object, (136, 5).into());
+            
+            ball.spawn_to_centre();
+            ball.start_ball();
+        }
+        if ai_score.score == 3 {
+            ball.entity.sprite.hide();
+            object.commit();
+            loop {
+                if input.is_pressed(Button::A){
+                    // TODO: write who wins here
+                    
+                    player_score.reset_score(&object, (88,5).into());
+                    ai_score.reset_score(&object, (136, 5).into());
+                    ball.entity.sprite.show();
+                    break;
+                }
+                input.update();
+            }
+        }
+
+        if ball.entity.position.x > agb::display::WIDTH - 1 {
+            ball.entity.velocity.x = 0;
+            ball.entity.velocity.y = 0;
+            player_score.increment(&object, (88,5).into());
+            
+            ball.spawn_to_centre();
+            ball.start_ball();
+        }
+        if player_score.score > 3 {
+            ball.entity.sprite.hide();
+            object.commit();
+            loop {
+                if input.is_pressed(Button::A){
+                    // TODO: write who wins here
+                    player_score.reset_score(&object, (88,5).into());
+                    ai_score.reset_score(&object, (136, 5).into());
+                    ball.entity.sprite.show();
+                    break;
+                }
+                input.update();
+            }
+        }
 
         //Updates sprites with input
-
         // Set the position of the ball to match our new calculated position
         ball.entity.update_sprite_position();
-
         left_paddle.move_paddle_with_input(input.y_tri() as i32);
-        // right_paddle.move_paddle_with_input(input.y_tri() as i32);
+
+        // ball speed is 2 so reduced ai speed to 1 to allow some scoring by player
         right_paddle.update_ai_paddle(&ball.entity, 1);
 
         // Wait for vblank, then commit the objects to the screen
         agb::display::busy_wait_for_vblank();
         object.commit();
-
         input.update()
-    }
-
+}
     /// Ball struct that holds the sprite of the ball
     pub struct Ball<'a> {
         entity: Entity<'a>,
@@ -79,10 +144,10 @@ fn main(mut gba: agb::Gba) -> ! {
     /// Impl of ball to allow for methods to interact with the sprite
     impl<'a> Ball<'a> {
         pub fn new(object: &'a OamManaged) -> Self {
-            let mut ball: Entity = Entity::new(&object, (16_u16, 16_u16).into());
+            let mut ball: Entity = Entity::new(object, (16_u16, 16_u16).into());
             ball.sprite.set_sprite(object.sprite(BALL.sprite(0)));
-            ball.velocity.x = 1;
-            ball.velocity.y = 1;
+            ball.velocity.x = 2;  // switched these from 1 to make it harder for the ai paddle
+            ball.velocity.y = 2;
             ball.set_spawn((50, 50).into());
             ball.sprite.show();
             Self { entity: ball }
@@ -91,20 +156,27 @@ fn main(mut gba: agb::Gba) -> ! {
         /// Keeps the ball within the bounds of the screen not allowing it to move pass the limit
         pub fn checks_and_keeps_in_bounds(&mut self) {
             self.entity.position.x = (self.entity.position.x + self.entity.velocity.x)
-                .clamp(0, agb::display::WIDTH - 16);
+                .clamp(-16, agb::display::WIDTH);    // previously .clamp(0, agb::display::WIDTH - 16)
             self.entity.position.y = (self.entity.position.y + self.entity.velocity.y)
                 .clamp(0, agb::display::HEIGHT - 16);
         }
 
         /// Bounces the ball if it hits the edge of the screen
         pub fn bounce_if_hits_screen_bounds(&mut self) {
-            if self.entity.position.x == 0 || self.entity.position.x == agb::display::WIDTH - 16 {
-                self.entity.velocity.x = -self.entity.velocity.x;
-            }
-
             if self.entity.position.y == 0 || self.entity.position.y == agb::display::HEIGHT - 16 {
                 self.entity.velocity.y = -self.entity.velocity.y;
             }
+        }
+        
+        pub fn spawn_to_centre(&mut self) {
+            self.entity.sprite.hide();
+            self.entity.set_spawn((50, 50).into());
+            self.entity.sprite.show();
+        }
+
+        pub fn start_ball(&mut self) {
+            self.entity.velocity.x = 2;
+            self.entity.velocity.y = 2;
         }
     }
 
@@ -120,7 +192,6 @@ fn main(mut gba: agb::Gba) -> ! {
         middle: Entity<'a>,
         bottom: Entity<'a>,
         velocity: Vector2D<i32>,
-        which_side: Side,
     }
 
     /// Impl of paddle to allow for methods to interact with the sprite and setup
@@ -134,7 +205,7 @@ fn main(mut gba: agb::Gba) -> ! {
 
             let paddle_collision_mask: Vector2D<u16> = (14_u16, 14_u16).into();
 
-            let mut paddle_middle: Entity = Entity::new(&object, paddle_collision_mask);
+            let mut paddle_middle: Entity = Entity::new(object, paddle_collision_mask);
             paddle_middle
                 .sprite
                 .set_sprite(object.sprite(PADDLE_MID.sprite(0)));
@@ -143,7 +214,7 @@ fn main(mut gba: agb::Gba) -> ! {
             paddle_middle.set_spawn((x_pos_of_paddle, 50).into());
             paddle_middle.sprite.show();
 
-            let mut paddle_top: Entity = Entity::new(&object, paddle_collision_mask);
+            let mut paddle_top: Entity = Entity::new(object, paddle_collision_mask);
             paddle_top
                 .sprite
                 .set_sprite(object.sprite(PADDLE_END.sprite(0)));
@@ -151,7 +222,7 @@ fn main(mut gba: agb::Gba) -> ! {
             paddle_top.set_spawn((x_pos_of_paddle, 34).into());
             paddle_top.sprite.show();
 
-            let mut paddle_bottom: Entity = Entity::new(&object, paddle_collision_mask);
+            let mut paddle_bottom: Entity = Entity::new(object, paddle_collision_mask);
             paddle_bottom
                 .sprite
                 .set_sprite(object.sprite(PADDLE_END.sprite(0)));
@@ -170,15 +241,14 @@ fn main(mut gba: agb::Gba) -> ! {
                 top: paddle_top,
                 middle: paddle_middle,
                 bottom: paddle_bottom,
-                which_side,
                 velocity: (0, 0).into(),
             }
         }
 
         /// Checks to make sure the paddle is within the bounds of the screen
         pub fn checks_and_keeps_in_bounds(&mut self) {
-            self.top.position.y =
-                (self.top.position.y + self.top.velocity.y).clamp(0, agb::display::HEIGHT - 48);
+            self.top.position.y = (self.top.position.y + self.top.velocity.y)
+                .clamp(0, agb::display::HEIGHT - 48);
             self.middle.position.y = (self.middle.position.y + self.middle.velocity.y)
                 .clamp(16, agb::display::HEIGHT - 32);
             self.bottom.position.y = (self.bottom.position.y + self.bottom.velocity.y)
@@ -210,21 +280,66 @@ fn main(mut gba: agb::Gba) -> ! {
 
             if intersects(&ball.entity, &self.bottom) {
                 ball.entity.velocity.x = -ball.entity.velocity.x;
-                return;
             }
         }
 
         // This function will make the AI paddle move towards the ball.
         pub fn update_ai_paddle(&mut self, ball: &Entity, speed: i32) {
-            if ball.position.y < self.middle.position.y {
-                self.velocity.y = -speed;
-            } else if ball.position.y > self.middle.position.y {
-                self.velocity.y = speed;
-            } else {
-                self.velocity.y = 0;
+            match ball.position.y {
+                x if x < self.middle.position.y => self.velocity.y = -speed,
+                x if x > self.middle.position.y => self.velocity.y = speed,
+                _ => self.velocity.y = 0
             }
 
             self.move_paddle_with_input(self.velocity.y);
+        }
+
+    }
+
+    pub struct Score<'a> {
+        entity: Entity<'a>,
+        sprite: &'a Tag,
+        score: u16,
+    }
+
+    impl<'a> Score <'a> {
+
+        pub fn new(object: &'a OamManaged, tag: &'a Tag, pos: Vector2D<i32>) -> Self {
+            let mut score: Entity = Entity::new(object, (16_u16, 16_u16).into());
+            score.sprite.set_sprite(object.sprite(tag.sprite(0)));
+            score.set_spawn(pos);
+            score.sprite.show();
+            Score {
+                entity: score,
+                sprite: tag,
+                score: 0
+            }
+        }
+
+        #[allow(unused_assignments)]
+        pub fn increment(&mut self, object: &'a OamManaged, pos: Vector2D<i32>) {
+            self.score += 1;
+            let mut sprite_ref: &Tag = self.sprite;
+            match self.score {
+                0 => sprite_ref = ZERO,
+                1 => sprite_ref = ONE,
+                2 => sprite_ref = TWO,
+                3 => sprite_ref = THREE,
+                _ => sprite_ref = ZERO,
+            }
+            if self.score <= 3 {
+                self.sprite = sprite_ref;
+                self.entity.sprite.set_sprite(object.sprite(sprite_ref.sprite(0)));
+                self.entity.set_spawn(pos);
+                self.entity.sprite.show();
+            }
+        }
+
+        pub fn reset_score(&mut self, object: &'a OamManaged, pos: Vector2D<i32>) {
+            self.score = 0;
+            self.entity.sprite.set_sprite(object.sprite(ZERO.sprite(0)));
+            self.entity.set_spawn(pos);
+            self.entity.sprite.show();
         }
     }
 
