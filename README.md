@@ -1,10 +1,9 @@
-# AGBRS Pong
+# AGBRS template
 
-## A basic pong implementation
+## A basic template example for agb projects
 
-This takes what was started in the [official tutorial](https://agbrs.github.io/agb/pong/01_introduction.html) and finishes it out. It is far from perfect, but was my attempt at finishing it out. It's missing the animations for the ball that was included in [sprites.aseprite](gfx/sprites.aseprite), pretty sure there is not way to beat the AI since it just tracks the ball, and a bit of faulty collision logic. Used this as a fun project to learn simple game dev and to finally build something that can run on GBA emulators and hardware!
-
-![Pong on a miyoo](pong_on_miyoo.jpg)
+This makes getting started with a new project for the Game Boy Advance in rust really simple, by providing
+all the boiler plate files for you.
 
 ## Building
 
@@ -12,7 +11,7 @@ This takes what was started in the [official tutorial](https://agbrs.github.io/a
 
 You will need the following installed in order to build and run this project:
 
-- A recent version of `rustup`. See the [rust website](https://www.rust-lang.org/tools/install) for instructions for your operating system
+* A recent version of `rustup`. See the [rust website](https://www.rust-lang.org/tools/install) for instructions for your operating system
 
 You will also want to install an emulator. The best support in agb is with [mgba](https://mgba.io), with
 `println!` support via `agb::println!` but any emulator should work. You'll get the best experience if
@@ -35,7 +34,7 @@ or in release mode (recommended for the final version to ship to players)
 cargo build --release
 ```
 
-The resulting file will be in `target/thumbv4t-none-eabi/debug/agbrs_pong` or `target/thumbv4t-none-eabi/release/agbrs_pong` depending on
+The resulting file will be in `target/thumbv4t-none-eabi/debug/<your game>` or `target/thumbv4t-none-eabi/release/<your game>` depending on
 whether you did a release or debug build.
 
 If you have `mgba-qt` in your path, you will be able to run your game with
@@ -64,5 +63,5 @@ running on the real thing.
 First build the binary in release mode using the instructions above, then do the following:
 
 ```sh
-agb-gbafix target/thumbv4t-none-eabi/release/agbrs_pong -o agbrs_pong.gba
+agb-gbafix target/thumbv4t-none-eabi/release/<your game> -o <your game>.gba
 ```
